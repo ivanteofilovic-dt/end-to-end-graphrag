@@ -23,21 +23,15 @@ class SpannerConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-3-flash"
     temperature: float = 0.0
     max_output_tokens: int = 8192
 
 
-class EmbeddingConfig(BaseModel):
-    model: str = "text-embedding-005"
-    dimensions: int = 768
-    task_type: str = "RETRIEVAL_DOCUMENT"
-    batch_size: int = 250
-
-
-class CommunityConfig(BaseModel):
-    max_levels: int = 5
-    resolution: float = 1.0
+class SplinkConfig(BaseModel):
+    match_weight_threshold: float = 6.0
+    cluster_threshold: float = 0.95
+    max_pairs_per_type: int = 10_000_000
 
 
 class PipelineConfig(BaseModel):
@@ -49,8 +43,7 @@ class GraphRAGConfig(BaseModel):
     bigquery: BigQueryConfig
     spanner: SpannerConfig
     llm: LLMConfig = LLMConfig()
-    embedding: EmbeddingConfig = EmbeddingConfig()
-    community: CommunityConfig = CommunityConfig()
+    splink: SplinkConfig = SplinkConfig()
     pipeline: PipelineConfig = PipelineConfig()
 
     @classmethod

@@ -1,8 +1,7 @@
-"""Step 1: Load input documents from BigQuery."""
+"""Step 1: Load input documents from BigQuery source table."""
 
 from __future__ import annotations
 
-import hashlib
 import logging
 
 from google.cloud import bigquery
@@ -14,13 +13,9 @@ logger = logging.getLogger(__name__)
 
 DOCUMENTS_SCHEMA = [
     bigquery.SchemaField("id", "STRING", mode="REQUIRED"),
-    bigquery.SchemaField("title", "STRING"),
     bigquery.SchemaField("raw_content", "STRING"),
+    bigquery.SchemaField("conversation_date", "STRING"),
 ]
-
-
-def _doc_id(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def run(cfg: GraphRAGConfig) -> None:
@@ -28,7 +23,7 @@ def run(cfg: GraphRAGConfig) -> None:
     bq.ensure_dataset(cfg)
 
     client = bq.get_client(cfg)
-    query = f"SELECT * FROM `{cfg.source_table_fqn()}`"
+    query = f"SELECT data_id, full_conversation, conversation_date FROM `{cfg.source_table_fqn()}`"
     job = client.query(query)
 
     seen: set[str] = set()
@@ -36,18 +31,18 @@ def run(cfg: GraphRAGConfig) -> None:
 
     for row in job.result(page_size=cfg.pipeline.batch_size):
         row_dict = dict(row)
+        data_id = str(row_dict.get("data_id") or "")
         text = row_dict.get("full_conversation") or ""
-        title = row_dict.get("data_id") or ""
-        doc_id = _doc_id(text)
+        conv_date = str(row_dict.get("conversation_date") or "")
 
-        if doc_id in seen:
+        if not data_id or data_id in seen:
             continue
-        seen.add(doc_id)
+        seen.add(data_id)
 
         all_docs.append({
-            "id": doc_id,
-            "title": str(title),
+            "id": data_id,
             "raw_content": text,
+            "conversation_date": conv_date,
         })
 
     if not all_docs:

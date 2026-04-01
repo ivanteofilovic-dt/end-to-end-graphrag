@@ -10,27 +10,23 @@ import time
 from graphrag.config import GraphRAGConfig
 from graphrag.storage import bigquery as bq
 from graphrag.pipeline import (
-    community_reports,
-    create_communities,
     extract_graph,
-    finalize_graph,
-    generate_embeddings,
+    entity_resolution,
     load_documents,
+    write_spanner,
 )
 
 STEPS = {
-    1: ("load_input_documents", load_documents.run),
+    1: ("load_documents", load_documents.run),
     2: ("extract_graph", extract_graph.run),
-    3: ("finalize_graph", finalize_graph.run),
-    4: ("create_communities", create_communities.run),
-    5: ("create_community_reports", community_reports.run),
-    6: ("generate_text_embeddings", generate_embeddings.run),
+    3: ("entity_resolution", entity_resolution.run),
+    4: ("write_to_spanner", write_spanner.run),
 }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Graph RAG Indexing Pipeline (Google Cloud)"
+        description="Telecom Knowledge Graph Indexing Pipeline"
     )
     parser.add_argument(
         "--config", default="config.yaml",
@@ -38,15 +34,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--step", type=int, default=None,
-        help="Run only this step (1-6)",
+        help="Run only this step (1-4)",
     )
     parser.add_argument(
         "--from-step", type=int, default=None, dest="from_step",
-        help="Run from this step onwards (1-6)",
-    )
-    parser.add_argument(
-        "--graphml", default=None,
-        help="Path to export GraphML snapshot (used in step 3)",
+        help="Run from this step onwards (1-4)",
     )
     parser.add_argument(
         "--max-rows", type=int, default=None, dest="max_rows",
@@ -89,8 +81,6 @@ def main() -> None:
 
         if step_num == 2 and args.max_rows:
             fn(cfg, max_rows=args.max_rows)
-        elif step_num == 3 and args.graphml:
-            fn(cfg, graphml_path=args.graphml)
         else:
             fn(cfg)
 

@@ -12,19 +12,13 @@ spanner:
   database_id: "graphrag-db"
 
 llm:
-  model: "gemini-2.5-flash"
+  model: "gemini-3-flash"
   temperature: 0.0
   max_output_tokens: 8192
 
-embedding:
-  model: "text-embedding-005"
-  dimensions: 768
-  task_type: "RETRIEVAL_DOCUMENT"
-  batch_size: 250
-
-community:
-  max_levels: 5
-  resolution: 1.0
+splink:
+  match_weight_threshold: 6.0
+  cluster_threshold: 0.95
 
 pipeline:
   batch_size: 500

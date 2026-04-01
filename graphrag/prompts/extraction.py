@@ -1,71 +1,161 @@
-"""Entity and relationship extraction prompt for telecom call transcripts."""
+"""Entity and relationship extraction prompt for telecom call transcripts.
+
+Defines the system instruction, user prompt template, and Gemini structured
+output schema for extracting 8 node types and 11 relationship types.
+"""
 
 from __future__ import annotations
 
-ENTITY_TYPES = [
-    "PERSON",
-    "ORGANIZATION",
-    "PRODUCT",
-    "SERVICE",
-    "ISSUE",
-    "LOCATION",
-    "CONCEPT",
-    "EVENT",
+NODE_TYPES = [
+    "Call",
+    "Customer",
+    "Agent",
+    "Problem",
+    "Product",
+    "Service",
+    "Solution",
+    "Feedback",
+]
+
+RELATIONSHIP_TYPES = [
+    "INITIATED",
+    "RELATES_TO",
+    "AFFECTS",
+    "MENTIONS",
+    "PROVIDED",
+    "RESOLVES",
+    "ABOUT",
+    "EXPRESSED_SENTIMENT_TOWARD",
+    "HANDLED_BY",
+    "RESULTED_IN",
+    "REFERENCES",
 ]
 
 EXTRACTION_SYSTEM_INSTRUCTION = """\
-You are an expert at extracting structured knowledge from telecom customer \
-service call transcripts. Your task is to identify all meaningful entities \
-and relationships mentioned in the conversation.
+You are an expert knowledge-graph builder for telecom customer service data. \
+Given a customer call transcript you must extract all entities (nodes) and \
+relationships (edges) that are explicitly or strongly implied in the \
+conversation.
 
-Entity types to extract: {entity_types}
+### Node types to extract
 
-Guidelines:
-- Extract every distinct entity mentioned, including the customer, agent, \
-products, services, technical issues, plans, promotions, locations, etc.
-- Normalize entity names: use UPPERCASE for all entity names.
-- For each entity, provide a concise but informative description based on \
-what the transcript says about it.
-- For each relationship, describe how the two entities are connected in the \
-context of this transcript.
+1. **Call** -- the interaction itself.
+   Attributes: call_category (billing, technical support, cancellation, \
+general inquiry, etc.), call_outcome (resolved, unresolved, follow-up \
+needed, escalated), timestamp (ISO-8601 if mentioned).
+
+2. **Customer** -- the person calling.
+   Attributes: customer_id (if mentioned), customer_type (new, existing, \
+business, private), overall_sentiment (positive, neutral, negative, mixed).
+
+3. **Agent** -- the company representative.
+   Attributes: agent_id (if mentioned), role (if mentioned).
+
+4. **Problem** -- each distinct issue raised by the customer.
+   Attributes: issue_type (concise label), severity (low, medium, high, \
+critical), description (brief normalized description).
+
+5. **Product** -- any product explicitly mentioned.
+   Attributes: product_name, product_type.
+
+6. **Service** -- any service or subscription mentioned.
+   Attributes: service_name, service_category.
+
+7. **Solution** -- what the company did or proposed.
+   Attributes: solution_type (concise label), resolution_status (applied, \
+pending, rejected).
+
+8. **Feedback** -- explicit feedback from the customer.
+   Attributes: feedback_type (complaint, praise, suggestion), \
+sentiment (positive, neutral, negative).
+
+### Relationship types to extract
+
+Use EXACTLY these relationship labels:
+- Customer **INITIATED** Call
+- Call **RELATES_TO** Problem
+- Problem **AFFECTS** Product
+- Problem **AFFECTS** Service
+- Call **MENTIONS** Product
+- Call **MENTIONS** Service
+- Agent **PROVIDED** Solution
+- Solution **RESOLVES** Problem
+- Customer **PROVIDED** Feedback
+- Feedback **ABOUT** Product or Service
+- Customer **EXPRESSED_SENTIMENT_TOWARD** Product or Service
+- Agent **HANDLED_BY** Call  (the agent handled the call)
+- Solution **RESULTED_IN** Call  (solution resulted from the call)
+- Call **REFERENCES** Problem  (alternative to RELATES_TO if indirect)
+
+### Guidelines
+
+- Extract EVERY entity mentioned, even if only implied.
+- Use a short, normalised uppercase NAME for each node (e.g. "INTERNET \
+SERVICE", "BILLING ISSUE").
+- Each transcript should produce exactly ONE Call node and at most ONE \
+Customer node.
 - Assign a weight between 0.0 and 1.0 to each relationship reflecting its \
-importance in the transcript.
-- Be thorough: it is better to extract too many entities than too few.\
+importance.
+- Return valid JSON matching the provided schema.\
 """
 
 EXTRACTION_PROMPT_TEMPLATE = """\
-Extract all entities and relationships from the following telecom customer \
-service call transcript.
+Extract all nodes and relationships from the following telecom customer \
+call transcript.
 
 ---TRANSCRIPT START---
 {text}
 ---TRANSCRIPT END---
 
-Return the result as JSON with two arrays: "entities" and "relationships".\
+Return the result as JSON with two arrays: "nodes" and "relationships".\
 """
+
+# ── Gemini structured output schema ─────────────────────────────────────
+
+_NODE_ATTRIBUTES_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "call_category": {"type": "STRING", "nullable": True},
+        "call_outcome": {"type": "STRING", "nullable": True},
+        "timestamp": {"type": "STRING", "nullable": True},
+        "customer_id": {"type": "STRING", "nullable": True},
+        "customer_type": {"type": "STRING", "nullable": True},
+        "overall_sentiment": {"type": "STRING", "nullable": True},
+        "agent_id": {"type": "STRING", "nullable": True},
+        "role": {"type": "STRING", "nullable": True},
+        "issue_type": {"type": "STRING", "nullable": True},
+        "severity": {"type": "STRING", "nullable": True},
+        "description": {"type": "STRING", "nullable": True},
+        "product_name": {"type": "STRING", "nullable": True},
+        "product_type": {"type": "STRING", "nullable": True},
+        "service_name": {"type": "STRING", "nullable": True},
+        "service_category": {"type": "STRING", "nullable": True},
+        "solution_type": {"type": "STRING", "nullable": True},
+        "resolution_status": {"type": "STRING", "nullable": True},
+        "feedback_type": {"type": "STRING", "nullable": True},
+        "sentiment": {"type": "STRING", "nullable": True},
+    },
+}
 
 EXTRACTION_RESPONSE_SCHEMA = {
     "type": "OBJECT",
     "properties": {
-        "entities": {
+        "nodes": {
             "type": "ARRAY",
             "items": {
                 "type": "OBJECT",
                 "properties": {
+                    "node_type": {
+                        "type": "STRING",
+                        "description": "One of: " + ", ".join(NODE_TYPES),
+                    },
                     "name": {
                         "type": "STRING",
-                        "description": "The canonical name of the entity (UPPERCASE).",
+                        "description": "Short normalised UPPERCASE name.",
                     },
-                    "type": {
-                        "type": "STRING",
-                        "description": "One of: " + ", ".join(ENTITY_TYPES),
-                    },
-                    "description": {
-                        "type": "STRING",
-                        "description": "A concise description of the entity based on the transcript.",
-                    },
+                    "attributes": _NODE_ATTRIBUTES_SCHEMA,
                 },
-                "required": ["name", "type", "description"],
+                "required": ["node_type", "name", "attributes"],
             },
         },
         "relationships": {
@@ -73,28 +163,38 @@ EXTRACTION_RESPONSE_SCHEMA = {
             "items": {
                 "type": "OBJECT",
                 "properties": {
+                    "relationship_type": {
+                        "type": "STRING",
+                        "description": "One of: " + ", ".join(RELATIONSHIP_TYPES),
+                    },
                     "source": {
                         "type": "STRING",
-                        "description": "The name of the source entity (UPPERCASE).",
+                        "description": "Name of the source node (UPPERCASE).",
                     },
                     "target": {
                         "type": "STRING",
-                        "description": "The name of the target entity (UPPERCASE).",
+                        "description": "Name of the target node (UPPERCASE).",
                     },
                     "description": {
                         "type": "STRING",
-                        "description": "A description of the relationship.",
+                        "description": "Brief description of the relationship.",
                     },
                     "weight": {
                         "type": "NUMBER",
                         "description": "Importance weight from 0.0 to 1.0.",
                     },
                 },
-                "required": ["source", "target", "description", "weight"],
+                "required": [
+                    "relationship_type",
+                    "source",
+                    "target",
+                    "description",
+                    "weight",
+                ],
             },
         },
     },
-    "required": ["entities", "relationships"],
+    "required": ["nodes", "relationships"],
 }
 
 
@@ -103,6 +203,4 @@ def format_extraction_prompt(text: str) -> str:
 
 
 def format_system_instruction() -> str:
-    return EXTRACTION_SYSTEM_INSTRUCTION.format(
-        entity_types=", ".join(ENTITY_TYPES)
-    )
+    return EXTRACTION_SYSTEM_INSTRUCTION
