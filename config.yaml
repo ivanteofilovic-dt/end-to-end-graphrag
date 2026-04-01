@@ -1,0 +1,30 @@
+gcp:
+  project_id: "my-project"
+  location: "us-central1"
+
+bigquery:
+  source_dataset: "calls"
+  source_table: "transcripts"
+  intermediate_dataset: "graphrag"
+
+spanner:
+  instance_id: "graphrag-instance"
+  database_id: "graphrag-db"
+
+llm:
+  model: "gemini-2.5-flash"
+  temperature: 0.0
+  max_output_tokens: 8192
+
+embedding:
+  model: "text-embedding-005"
+  dimensions: 768
+  task_type: "RETRIEVAL_DOCUMENT"
+  batch_size: 250
+
+community:
+  max_levels: 5
+  resolution: 1.0
+
+pipeline:
+  batch_size: 500

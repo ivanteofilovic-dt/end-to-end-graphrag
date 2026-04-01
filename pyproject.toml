@@ -1,0 +1,19 @@
+[project]
+name = "end-to-end-graphrag"
+version = "0.1.0"
+description = "Graph RAG indexing pipeline on Google Cloud (BigQuery, Gemini Batch API, Spanner Graph)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "google-genai",
+    "google-cloud-bigquery",
+    "google-cloud-spanner",
+    "graspologic",
+    "igraph",
+    "pydantic",
+    "pydantic-settings",
+    "pyyaml",
+]
+
+[project.scripts]
+graphrag = "main:main"
