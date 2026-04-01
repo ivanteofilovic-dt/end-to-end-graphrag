@@ -34,7 +34,14 @@ def read_table(
     where: str | None = None,
     batch_size: int | None = None,
 ) -> Iterator[list[dict[str, Any]]]:
-    """Yield batches of rows from a BigQuery table."""
+    """Yield batches of rows from a BigQuery table.
+
+    Returns an empty iterator if the table does not exist.
+    """
+    if not table_exists(cfg, table_name):
+        logger.warning("Table %s does not exist yet; returning empty result", table_name)
+        return
+
     client = get_client(cfg)
     fqn = cfg.table_fqn(table_name)
     col_expr = ", ".join(columns) if columns else "*"

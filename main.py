@@ -8,6 +8,7 @@ import sys
 import time
 
 from graphrag.config import GraphRAGConfig
+from graphrag.storage import bigquery as bq
 from graphrag.pipeline import (
     community_reports,
     create_communities,
@@ -74,6 +75,8 @@ def main() -> None:
         if step_num not in STEPS:
             logger.error("Unknown step %d. Valid steps: %s", step_num, list(STEPS.keys()))
             sys.exit(1)
+
+    bq.ensure_dataset(cfg)
 
     total_start = time.time()
 
