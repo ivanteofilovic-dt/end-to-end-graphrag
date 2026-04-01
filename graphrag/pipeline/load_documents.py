@@ -36,8 +36,8 @@ def run(cfg: GraphRAGConfig) -> None:
 
     for row in job.result(page_size=cfg.pipeline.batch_size):
         row_dict = dict(row)
-        text = row_dict.get("text") or row_dict.get("raw_content") or ""
-        title = row_dict.get("title") or row_dict.get("id") or ""
+        text = row_dict.get("full_conversation") or ""
+        title = row_dict.get("data_id") or ""
         doc_id = _doc_id(text)
 
         if doc_id in seen:
