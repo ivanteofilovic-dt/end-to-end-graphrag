@@ -289,7 +289,7 @@ wheels = [
 [[package]]
 name = "end-to-end-graphrag"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "google-cloud-bigquery" },
     { name = "google-cloud-spanner" },

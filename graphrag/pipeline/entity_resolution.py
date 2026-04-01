@@ -74,8 +74,8 @@ MERGED_RELATIONSHIPS_SCHEMA = [
 _SPLINK_CONFIGS: dict[str, dict] = {
     NodeType.CUSTOMER: {
         "comparisons": [
-            cl.jaro_winkler_at_thresholds("name", [0.9, 0.7]),
-            cl.exact_match("customer_type"),
+            cl.JaroWinklerAtThresholds("name", [0.9, 0.7]),
+            cl.ExactMatch("customer_type"),
         ],
         "blocking": [
             block_on("customer_type"),
@@ -84,8 +84,8 @@ _SPLINK_CONFIGS: dict[str, dict] = {
     },
     NodeType.AGENT: {
         "comparisons": [
-            cl.jaro_winkler_at_thresholds("name", [0.9, 0.7]),
-            cl.exact_match("agent_role"),
+            cl.JaroWinklerAtThresholds("name", [0.9, 0.7]),
+            cl.ExactMatch("agent_role"),
         ],
         "blocking": [
             block_on("agent_role"),
@@ -94,8 +94,8 @@ _SPLINK_CONFIGS: dict[str, dict] = {
     },
     NodeType.PROBLEM: {
         "comparisons": [
-            cl.jaro_winkler_at_thresholds("name", [0.9, 0.7]),
-            cl.jaro_winkler_at_thresholds("issue_type", [0.9, 0.7]),
+            cl.JaroWinklerAtThresholds("name", [0.9, 0.7]),
+            cl.JaroWinklerAtThresholds("issue_type", [0.9, 0.7]),
         ],
         "blocking": [
             block_on("issue_type"),
@@ -104,8 +104,8 @@ _SPLINK_CONFIGS: dict[str, dict] = {
     },
     NodeType.PRODUCT: {
         "comparisons": [
-            cl.jaro_winkler_at_thresholds("name", [0.9, 0.7]),
-            cl.exact_match("product_type"),
+            cl.JaroWinklerAtThresholds("name", [0.9, 0.7]),
+            cl.ExactMatch("product_type"),
         ],
         "blocking": [
             block_on("product_type"),
@@ -114,8 +114,8 @@ _SPLINK_CONFIGS: dict[str, dict] = {
     },
     NodeType.SERVICE: {
         "comparisons": [
-            cl.jaro_winkler_at_thresholds("name", [0.9, 0.7]),
-            cl.exact_match("service_category"),
+            cl.JaroWinklerAtThresholds("name", [0.9, 0.7]),
+            cl.ExactMatch("service_category"),
         ],
         "blocking": [
             block_on("service_category"),
@@ -124,8 +124,8 @@ _SPLINK_CONFIGS: dict[str, dict] = {
     },
     NodeType.SOLUTION: {
         "comparisons": [
-            cl.jaro_winkler_at_thresholds("name", [0.9, 0.7]),
-            cl.exact_match("resolution_status"),
+            cl.JaroWinklerAtThresholds("name", [0.9, 0.7]),
+            cl.ExactMatch("resolution_status"),
         ],
         "blocking": [
             block_on("resolution_status"),
@@ -134,8 +134,8 @@ _SPLINK_CONFIGS: dict[str, dict] = {
     },
     NodeType.FEEDBACK: {
         "comparisons": [
-            cl.jaro_winkler_at_thresholds("name", [0.9, 0.7]),
-            cl.exact_match("feedback_type"),
+            cl.JaroWinklerAtThresholds("name", [0.9, 0.7]),
+            cl.ExactMatch("feedback_type"),
         ],
         "blocking": [
             block_on("feedback_type"),
