@@ -29,8 +29,8 @@ class LLMConfig(BaseModel):
 
 
 class SplinkConfig(BaseModel):
-    match_weight_threshold: float = 6.0
-    cluster_threshold: float = 0.95
+    match_weight_threshold: float = 2.0
+    cluster_threshold: float = 0.7
     max_pairs_per_type: int = 10_000_000
 
 

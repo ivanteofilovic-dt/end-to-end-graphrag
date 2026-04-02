@@ -8,6 +8,7 @@ nodes and remap all relationships accordingly.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from collections import defaultdict
 from typing import Any
@@ -22,6 +23,14 @@ from graphrag.models import NodeType
 from graphrag.storage import bigquery as bq
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_name(name: str) -> str:
+    """Normalize entity name for deduplication: lowercase, collapse whitespace/separators."""
+    name = name.strip().lower()
+    name = re.sub(r"[_\-/]+", " ", name)
+    name = re.sub(r"\s+", " ", name)
+    return name
 
 MERGED_NODES_SCHEMA = [
     bigquery.SchemaField("id", "STRING", mode="REQUIRED"),
@@ -76,6 +85,7 @@ _SPLINK_CONFIGS: dict[str, dict] = {
         "comparisons": [
             cl.JaroWinklerAtThresholds("name", [0.9, 0.7]),
             cl.ExactMatch("customer_type"),
+            cl.JaroWinklerAtThresholds("description", [0.9, 0.7]),
         ],
         "blocking": [
             block_on("customer_type"),
@@ -96,6 +106,7 @@ _SPLINK_CONFIGS: dict[str, dict] = {
         "comparisons": [
             cl.JaroWinklerAtThresholds("name", [0.9, 0.7]),
             cl.JaroWinklerAtThresholds("issue_type", [0.9, 0.7]),
+            cl.JaroWinklerAtThresholds("issue_description", [0.9, 0.7]),
         ],
         "blocking": [
             block_on("issue_type"),
@@ -106,6 +117,7 @@ _SPLINK_CONFIGS: dict[str, dict] = {
         "comparisons": [
             cl.JaroWinklerAtThresholds("name", [0.9, 0.7]),
             cl.ExactMatch("product_type"),
+            cl.JaroWinklerAtThresholds("description", [0.9, 0.7]),
         ],
         "blocking": [
             block_on("product_type"),
@@ -116,6 +128,7 @@ _SPLINK_CONFIGS: dict[str, dict] = {
         "comparisons": [
             cl.JaroWinklerAtThresholds("name", [0.9, 0.7]),
             cl.ExactMatch("service_category"),
+            cl.JaroWinklerAtThresholds("description", [0.9, 0.7]),
         ],
         "blocking": [
             block_on("service_category"),
@@ -126,6 +139,7 @@ _SPLINK_CONFIGS: dict[str, dict] = {
         "comparisons": [
             cl.JaroWinklerAtThresholds("name", [0.9, 0.7]),
             cl.ExactMatch("resolution_status"),
+            cl.JaroWinklerAtThresholds("description", [0.9, 0.7]),
         ],
         "blocking": [
             block_on("resolution_status"),
@@ -136,6 +150,7 @@ _SPLINK_CONFIGS: dict[str, dict] = {
         "comparisons": [
             cl.JaroWinklerAtThresholds("name", [0.9, 0.7]),
             cl.ExactMatch("feedback_type"),
+            cl.JaroWinklerAtThresholds("description", [0.9, 0.7]),
         ],
         "blocking": [
             block_on("feedback_type"),
@@ -230,31 +245,75 @@ def _pass_through_calls(nodes: list[dict]) -> list[dict[str, Any]]:
     return results
 
 
+def _pre_merge_by_normalized_name(
+    nodes: list[dict],
+) -> list[list[dict]]:
+    """Group nodes with identical normalized names into clusters.
+
+    This is a cheap first pass that collapses trivial duplicates
+    (case, whitespace, separators) before the more expensive Splink step.
+    """
+    by_norm: dict[str, list[dict]] = defaultdict(list)
+    for n in nodes:
+        key = _normalize_name(n.get("name") or "")
+        by_norm[key].append(n)
+    return list(by_norm.values())
+
+
 def _resolve_type(
     cfg: GraphRAGConfig,
     node_type: str,
     nodes: list[dict],
 ) -> list[dict[str, Any]]:
-    """Run Splink deduplication for one entity type."""
+    """Pre-merge on normalized name, then run Splink on remaining groups."""
+
+    # Pass 1: collapse trivial duplicates by exact normalized name
+    pre_groups = _pre_merge_by_normalized_name(nodes)
+    logger.info(
+        "Pre-merge %s: %d raw -> %d distinct normalized names",
+        node_type, len(nodes), len(pre_groups),
+    )
+
+    # Build one representative per pre-merge group
+    representatives: list[dict] = []
+    group_members: dict[str, list[dict]] = {}
+    for group in pre_groups:
+        rep = group[0].copy()
+        rep_id = rep["id"]
+        doc_ids: set[str] = set()
+        for m in group:
+            did = m.get("document_id")
+            if did:
+                doc_ids.add(did)
+        rep["_pre_merge_doc_ids"] = sorted(doc_ids)
+        representatives.append(rep)
+        group_members[rep_id] = group
+
+    # Pass 2: probabilistic dedup via Splink on the representatives
     splink_cfg = _SPLINK_CONFIGS.get(node_type)
-    if splink_cfg is None or len(nodes) < 2:
-        return [_make_canonical(n, [n]) | {"_source_ids": [n["id"]]} for n in nodes]
+    if splink_cfg is None or len(representatives) < 2:
+        results = []
+        for rep in representatives:
+            all_members = group_members[rep["id"]]
+            canon = _make_canonical(rep, all_members)
+            canon["_source_ids"] = [n["id"] for n in all_members]
+            results.append(canon)
+        return results
 
     extra_cols = _TYPE_COLUMNS.get(node_type, [])
     records = []
-    for n in nodes:
+    for n in representatives:
         rec: dict[str, Any] = {
             "unique_id": n["id"],
-            "name": n.get("name") or "",
+            "name": _normalize_name(n.get("name") or ""),
             "document_id": n.get("document_id") or "",
         }
         for col in extra_cols:
-            rec[col] = n.get(col) or ""
+            val = n.get(col) or ""
+            rec[col] = val.strip().lower() if isinstance(val, str) else val
         records.append(rec)
 
     df = pd.DataFrame(records)
-
-    # Replace empty strings with None so Splink treats them as missing
     df = df.replace("", None)
 
     db_api = DuckDBAPI()
@@ -277,8 +336,8 @@ def _resolve_type(
                 continue
     except Exception:
         logger.warning(
-            "Splink training failed for %s (%d nodes), falling back to name-based merge",
-            node_type, len(nodes),
+            "Splink training failed for %s (%d reps), falling back to name-based merge",
+            node_type, len(representatives),
         )
         return _fallback_name_merge(node_type, nodes)
 
@@ -298,14 +357,14 @@ def _resolve_type(
         )
         return _fallback_name_merge(node_type, nodes)
 
-    # Group nodes by cluster_id
-    node_by_id = {n["id"]: n for n in nodes}
+    # Expand Splink clusters back to all original nodes via pre-merge groups
+    rep_by_id = {n["id"]: n for n in representatives}
     clusters_map: dict[str, list[dict]] = defaultdict(list)
     for _, row in cluster_df.iterrows():
         uid = row["unique_id"]
         cid = str(row["cluster_id"])
-        if uid in node_by_id:
-            clusters_map[cid].append(node_by_id[uid])
+        if uid in rep_by_id:
+            clusters_map[cid].extend(group_members[uid])
 
     results: list[dict[str, Any]] = []
     for cluster_nodes in clusters_map.values():
@@ -320,7 +379,7 @@ def _fallback_name_merge(node_type: str, nodes: list[dict]) -> list[dict[str, An
     """Simple name-based merge when Splink cannot run."""
     by_name: dict[str, list[dict]] = defaultdict(list)
     for n in nodes:
-        by_name[n.get("name", "").upper()].append(n)
+        by_name[_normalize_name(n.get("name", ""))].append(n)
 
     results = []
     for group in by_name.values():
@@ -357,21 +416,15 @@ def _make_canonical(representative: dict, members: list[dict]) -> dict[str, Any]
 def _build_name_lookup(
     raw_nodes: list[dict], id_remap: dict[str, str]
 ) -> dict[str, str]:
-    """Map (document_id, name) pairs to canonical node IDs for relationship remapping.
-
-    Also builds a global name->canonical_id fallback for cross-document edges.
-    """
-    doc_name_to_canonical: dict[tuple[str, str], str] = {}
+    """Map normalized name -> canonical node ID for relationship remapping."""
     name_to_canonical: dict[str, str] = {}
 
     for n in raw_nodes:
         old_id = n["id"]
         canon_id = id_remap.get(old_id, old_id)
-        name = (n.get("name") or "").upper()
-        doc_id = n.get("document_id", "")
+        name = _normalize_name(n.get("name") or "")
 
         if name:
-            doc_name_to_canonical[(doc_id, name)] = canon_id
             name_to_canonical[name] = canon_id
 
     return name_to_canonical
@@ -386,8 +439,8 @@ def _remap_and_deduplicate_relationships(
     grouped: dict[EdgeKey, list[dict]] = defaultdict(list)
 
     for rel in raw_rels:
-        src_name = (rel.get("source_name") or "").upper()
-        tgt_name = (rel.get("target_name") or "").upper()
+        src_name = _normalize_name(rel.get("source_name") or "")
+        tgt_name = _normalize_name(rel.get("target_name") or "")
 
         src_id = name_to_canonical.get(src_name)
         tgt_id = name_to_canonical.get(tgt_name)

@@ -17,8 +17,8 @@ llm:
   max_output_tokens: 8192
 
 splink:
-  match_weight_threshold: 6.0
-  cluster_threshold: 0.95
+  match_weight_threshold: 2.0
+  cluster_threshold: 0.7
 
 pipeline:
   batch_size: 500
