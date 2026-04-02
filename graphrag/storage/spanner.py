@@ -112,8 +112,17 @@ def get_instance(cfg: GraphRAGConfig) -> spanner.Client:
 
 CLEANUP_DDL = [
     "DROP PROPERTY GRAPH IF EXISTS KnowledgeGraph",
+    "DROP INDEX IF EXISTS NodesByType",
+    "DROP INDEX IF EXISTS RelsByType",
+    "DROP INDEX IF EXISTS RelsBySource",
+    "DROP INDEX IF EXISTS RelsByTarget",
+    "DROP INDEX IF EXISTS IdxReverseEdge",
+    "DROP INDEX IF EXISTS IdxNodeLabel",
+    "DROP INDEX IF EXISTS IdxEdgeLabel",
     "DROP TABLE IF EXISTS Relationships",
     "DROP TABLE IF EXISTS Nodes",
+    "DROP TABLE IF EXISTS GraphEdge",
+    "DROP TABLE IF EXISTS GraphNode",
 ]
 
 
