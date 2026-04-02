@@ -97,7 +97,7 @@ PROPERTY_GRAPH_DDL = """
         )
         EDGE TABLES (
             Relationships
-                KEY (edge_id)
+                KEY (id, target_node_id, edge_id)
                 SOURCE KEY (id) REFERENCES Nodes(id)
                 DESTINATION KEY (target_node_id) REFERENCES Nodes(id)
                 PROPERTIES (description, weight, document_ids)
