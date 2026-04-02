@@ -110,17 +110,30 @@ def get_instance(cfg: GraphRAGConfig) -> spanner.Client:
     return spanner.Client(project=cfg.gcp.project_id)
 
 
+CLEANUP_DDL = [
+    "DROP PROPERTY GRAPH IF EXISTS KnowledgeGraph",
+    "DROP TABLE IF EXISTS Relationships",
+    "DROP TABLE IF EXISTS Nodes",
+]
+
+
 def create_schema(cfg: GraphRAGConfig) -> None:
-    """Create Spanner tables, indexes, and property graph."""
+    """Drop and recreate Spanner graph tables, indexes, and property graph.
+
+    Data in Spanner is always derived from BigQuery, so a full recreate
+    is safe and avoids schema-migration issues between runs.
+    """
     client = get_instance(cfg)
     instance = client.instance(cfg.spanner.instance_id)
     database = instance.database(cfg.spanner.database_id)
 
-    all_ddl = DDL_STATEMENTS + INDEX_STATEMENTS + [PROPERTY_GRAPH_DDL]
-    operation = database.update_ddl(all_ddl)
-    logger.info("Applying Spanner DDL (%d statements)...", len(all_ddl))
-    operation.result()
-    logger.info("Spanner graph schema created/updated")
+    logger.info("Dropping existing Spanner graph schema (if any)...")
+    database.update_ddl(CLEANUP_DDL).result()
+
+    create_ddl = DDL_STATEMENTS + INDEX_STATEMENTS + [PROPERTY_GRAPH_DDL]
+    logger.info("Creating Spanner graph schema (%d statements)...", len(create_ddl))
+    database.update_ddl(create_ddl).result()
+    logger.info("Spanner graph schema created")
 
 
 def _chunk_list(lst: list, size: int) -> list[list]:
