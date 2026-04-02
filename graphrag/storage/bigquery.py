@@ -166,7 +166,7 @@ def write_batch_request_table(
         out: dict[str, Any] = {}
         for key in pass_through_keys:
             out[key] = str(row[key])
-        out["request"] = json.dumps(row["request"])
+        out["request"] = row["request"]
         serialized.append(out)
 
     write_rows(cfg, table_name, serialized, schema_fields)
