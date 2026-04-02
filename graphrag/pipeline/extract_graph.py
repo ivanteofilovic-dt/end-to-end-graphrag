@@ -1,4 +1,4 @@
-"""Step 2: Extract typed nodes and relationships via Gemini Batch API."""
+"""Step 1: Extract typed nodes and relationships via Gemini Batch API."""
 
 from __future__ import annotations
 
@@ -68,27 +68,35 @@ RAW_RELATIONSHIPS_SCHEMA = [
 
 
 def run(cfg: GraphRAGConfig, *, max_rows: int | None = None) -> None:
-    logger.info("Step 2: Extracting graph from documents")
+    logger.info("Step 1: Extracting graph from source table")
 
     _prepare_extraction_requests(cfg, max_rows=max_rows)
     _run_extraction_batch(cfg)
     _parse_and_write_raw(cfg)
 
-    logger.info("Step 2 complete")
+    logger.info("Step 1 complete")
 
 
-# ── 2a: Prepare extraction request table ─────────────────────────────────
+# ── 1a: Prepare extraction request table ─────────────────────────────────
 
 
 def _prepare_extraction_requests(
     cfg: GraphRAGConfig, *, max_rows: int | None = None
 ) -> None:
-    logger.info("Step 2a: Preparing extraction requests")
-    docs = bq.read_table_all(cfg, "documents", columns=["id", "raw_content"])
-    if max_rows is not None:
-        docs = docs[:max_rows]
+    logger.info("Step 1a: Preparing extraction requests")
+
+    client = bq.get_client(cfg)
+    limit_clause = f" LIMIT {max_rows}" if max_rows else ""
+    query = (
+        f"SELECT data_id, full_conversation"
+        f" FROM `{cfg.source_table_fqn()}`"
+        f"{limit_clause}"
+    )
+    if max_rows:
         logger.info("Limiting extraction to %d documents (--max-rows)", max_rows)
 
+    job = client.query(query)
+    docs = [{"id": str(row["data_id"]), "raw_content": row["full_conversation"] or ""} for row in job.result()]
     gen_config = build_generation_config(
         cfg, response_schema=EXTRACTION_RESPONSE_SCHEMA
     )
@@ -104,11 +112,11 @@ def _prepare_extraction_requests(
     logger.info("Prepared %d extraction requests", len(rows))
 
 
-# ── 2b: Submit batch job ─────────────────────────────────────────────────
+# ── 1b: Submit batch job ─────────────────────────────────────────────────
 
 
 def _run_extraction_batch(cfg: GraphRAGConfig) -> None:
-    logger.info("Step 2b: Submitting extraction batch job")
+    logger.info("Step 1b: Submitting extraction batch job")
     batch_client.run_batch_job(
         cfg,
         src_table="extraction_requests",
@@ -116,7 +124,7 @@ def _run_extraction_batch(cfg: GraphRAGConfig) -> None:
     )
 
 
-# ── 2c: Parse results into raw_nodes / raw_relationships ────────────────
+# ── 1c: Parse results into raw_nodes / raw_relationships ────────────────
 
 _ATTR_MAP = {
     "Call": {
@@ -158,7 +166,7 @@ _ATTR_MAP = {
 
 
 def _parse_and_write_raw(cfg: GraphRAGConfig) -> None:
-    logger.info("Step 2c: Parsing extraction results")
+    logger.info("Step 1c: Parsing extraction results")
 
     results = batch_client.parse_batch_results(
         cfg, "extraction_results", pass_through_columns=["document_id"]

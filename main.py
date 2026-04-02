@@ -12,15 +12,13 @@ from graphrag.storage import bigquery as bq
 from graphrag.pipeline import (
     extract_graph,
     entity_resolution,
-    load_documents,
     write_spanner,
 )
 
 STEPS = {
-    1: ("load_documents", load_documents.run),
-    2: ("extract_graph", extract_graph.run),
-    3: ("entity_resolution", entity_resolution.run),
-    4: ("write_to_spanner", write_spanner.run),
+    1: ("extract_graph", extract_graph.run),
+    2: ("entity_resolution", entity_resolution.run),
+    3: ("write_to_spanner", write_spanner.run),
 }
 
 
@@ -34,15 +32,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--step", type=int, default=None,
-        help="Run only this step (1-4)",
+        help="Run only this step (1-3)",
     )
     parser.add_argument(
         "--from-step", type=int, default=None, dest="from_step",
-        help="Run from this step onwards (1-4)",
+        help="Run from this step onwards (1-3)",
     )
     parser.add_argument(
         "--max-rows", type=int, default=None, dest="max_rows",
-        help="Limit how many documents step 2 processes (e.g. 100 for a test run)",
+        help="Limit how many documents step 1 processes (e.g. 100 for a test run)",
     )
     args = parser.parse_args()
 
@@ -79,7 +77,7 @@ def main() -> None:
         logger.info("=" * 60)
         step_start = time.time()
 
-        if step_num == 2 and args.max_rows:
+        if step_num == 1 and args.max_rows:
             fn(cfg, max_rows=args.max_rows)
         else:
             fn(cfg)

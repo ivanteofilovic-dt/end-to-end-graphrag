@@ -8,21 +8,18 @@ Spanner Graph for querying via GQL / text-to-cypher.
 ## Architecture
 
 ```
-BigQuery (source)
+BigQuery (source table)
   │
   ▼
-Step 1 ─ Load Documents ──────────► BQ: documents
-  │
-  ▼
-Step 2 ─ Extract Graph ───────────► BQ: raw_nodes, raw_relationships
+Step 1 ─ Extract Graph ───────────► BQ: raw_nodes, raw_relationships
           (Gemini-3 Batch API)
   │
   ▼
-Step 3 ─ Entity Resolution ───────► BQ: merged_nodes, merged_relationships
+Step 2 ─ Entity Resolution ───────► BQ: merged_nodes, merged_relationships
           (Splink 4 + DuckDB)
   │
   ▼
-Step 4 ─ Write to Spanner ────────► Spanner Graph: KnowledgeGraph
+Step 3 ─ Write to Spanner ────────► Spanner Graph: KnowledgeGraph
                                         │
                                         ▼
                                    Text-to-GQL queries
@@ -95,39 +92,34 @@ uv run graphrag --config config.yaml
 ### Run a single step
 
 ```bash
-uv run graphrag --step 1          # Load documents only
-uv run graphrag --step 2          # Extract graph only
-uv run graphrag --step 3          # Entity resolution only
-uv run graphrag --step 4          # Write to Spanner only
+uv run graphrag --step 1          # Extract graph only
+uv run graphrag --step 2          # Entity resolution only
+uv run graphrag --step 3          # Write to Spanner only
 ```
 
 ### Resume from a specific step
 
 ```bash
-uv run graphrag --from-step 3     # Run steps 3 and 4
+uv run graphrag --from-step 2     # Run steps 2 and 3
 ```
 
 ### Test run with limited data
 
 ```bash
-uv run graphrag --step 2 --max-rows 100
+uv run graphrag --step 1 --max-rows 100
 ```
 
-This limits step 2 (extraction) to the first 100 documents -- useful for
+This limits step 1 (extraction) to the first 100 documents -- useful for
 validating the prompt and pipeline before processing the full dataset.
 
 ## Pipeline steps
 
-### Step 1: Load Documents
+### Step 1: Extract Graph (Gemini-3 Batch API)
 
-Reads transcripts from the BigQuery source table and writes them to an
-intermediate `documents` table. Deduplicates by `data_id`.
-
-### Step 2: Extract Graph (Gemini-3 Batch API)
-
-For each document, builds a `GenerateContentRequest` with a telecom-specific
-extraction prompt and submits it as a Gemini batch job (BigQuery-to-BigQuery).
-The model returns structured JSON with typed nodes and relationships.
+Reads transcripts directly from the BigQuery source table. For each document,
+builds a `GenerateContentRequest` with a telecom-specific extraction prompt and
+submits it as a Gemini batch job (BigQuery-to-BigQuery). The model returns
+structured JSON with typed nodes and relationships.
 
 **Extracted node types:**
 
@@ -147,7 +139,7 @@ The model returns structured JSON with typed nodes and relationships.
 INITIATED, RELATES_TO, AFFECTS, MENTIONS, PROVIDED, RESOLVES, ABOUT,
 EXPRESSED_SENTIMENT_TOWARD, HANDLED_BY, RESULTED_IN, REFERENCES
 
-### Step 3: Entity Resolution (Splink)
+### Step 2: Entity Resolution (Splink)
 
 Runs probabilistic deduplication per entity type using Splink 4 with a local
 DuckDB backend. Call nodes are passed through without resolution (1:1 with
@@ -161,7 +153,7 @@ transcripts). For all other types, the pipeline:
 
 Falls back to simple name-based merging if Splink training fails for a type.
 
-### Step 4: Write to Spanner Graph
+### Step 3: Write to Spanner Graph
 
 Creates the Spanner schema (Nodes table, Relationships table, secondary indexes,
 and a `KnowledgeGraph` property graph) then bulk-writes all merged data.
@@ -238,10 +230,9 @@ For natural-language queries, use `SpannerGraphQAChain` from the
 │   │   ├── client.py                    # Gemini Batch API client
 │   │   └── request_builder.py           # GenerateContentRequest builder
 │   ├── pipeline/
-│   │   ├── load_documents.py            # Step 1
-│   │   ├── extract_graph.py             # Step 2
-│   │   ├── entity_resolution.py         # Step 3
-│   │   └── write_spanner.py             # Step 4
+│   │   ├── extract_graph.py             # Step 1
+│   │   ├── entity_resolution.py         # Step 2
+│   │   └── write_spanner.py             # Step 3
 │   ├── prompts/
 │   │   └── extraction.py                # Extraction prompt + JSON schema
 │   └── storage/
