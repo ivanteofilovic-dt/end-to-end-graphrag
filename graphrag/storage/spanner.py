@@ -106,25 +106,39 @@ PROPERTY_GRAPH_DDL = """
 """
 
 
+_GRAPH_TABLES = ["Relationships", "GraphEdge", "Nodes", "GraphNode"]
+
+
 def get_instance(cfg: GraphRAGConfig) -> spanner.Client:
     return spanner.Client(project=cfg.gcp.project_id)
 
 
-CLEANUP_DDL = [
-    "DROP PROPERTY GRAPH IF EXISTS KnowledgeGraph",
-    "DROP INDEX IF EXISTS NodesByType",
-    "DROP INDEX IF EXISTS RelsByType",
-    "DROP INDEX IF EXISTS RelsBySource",
-    "DROP INDEX IF EXISTS RelsByTarget",
-    "DROP INDEX IF EXISTS IdxReverseEdge",
-    "DROP INDEX IF EXISTS IdxNodeLabel",
-    "DROP INDEX IF EXISTS IdxEdgeLabel",
-    "DROP INDEX IF EXISTS GraphEdgeByDate",
-    "DROP TABLE IF EXISTS Relationships",
-    "DROP TABLE IF EXISTS Nodes",
-    "DROP TABLE IF EXISTS GraphEdge",
-    "DROP TABLE IF EXISTS GraphNode",
-]
+def _discover_existing_objects(database, table_names: set[str]) -> tuple[list[str], list[str]]:
+    """Query INFORMATION_SCHEMA for property graphs and indexes to drop.
+
+    Returns (property_graph_names, index_names).
+    """
+    graphs: list[str] = []
+    indexes: list[str] = []
+    try:
+        with database.snapshot() as snapshot:
+            for row in snapshot.execute_sql(
+                "SELECT PROPERTY_GRAPH_NAME "
+                "FROM INFORMATION_SCHEMA.PROPERTY_GRAPHS"
+            ):
+                graphs.append(row[0])
+
+            for row in snapshot.execute_sql(
+                "SELECT INDEX_NAME, TABLE_NAME "
+                "FROM INFORMATION_SCHEMA.INDEXES "
+                "WHERE INDEX_TYPE != 'PRIMARY_KEY' "
+                "AND SPANNER_IS_MANAGED = FALSE"
+            ):
+                if row[1] in table_names:
+                    indexes.append(row[0])
+    except Exception:
+        logger.debug("Could not query INFORMATION_SCHEMA, skipping object discovery")
+    return graphs, indexes
 
 
 def create_schema(cfg: GraphRAGConfig) -> None:
@@ -132,13 +146,29 @@ def create_schema(cfg: GraphRAGConfig) -> None:
 
     Data in Spanner is always derived from BigQuery, so a full recreate
     is safe and avoids schema-migration issues between runs.
+
+    Property graphs, indexes, and tables are discovered dynamically via
+    INFORMATION_SCHEMA so we never miss leftovers from previous schema versions.
     """
     client = get_instance(cfg)
     instance = client.instance(cfg.spanner.instance_id)
     database = instance.database(cfg.spanner.database_id)
 
-    logger.info("Dropping existing Spanner graph schema (if any)...")
-    database.update_ddl(CLEANUP_DDL).result()
+    graphs, indexes = _discover_existing_objects(database, set(_GRAPH_TABLES))
+
+    cleanup_ddl: list[str] = []
+
+    for graph in graphs:
+        cleanup_ddl.append(f"DROP PROPERTY GRAPH IF EXISTS {graph}")
+
+    for idx in indexes:
+        cleanup_ddl.append(f"DROP INDEX IF EXISTS {idx}")
+
+    for table in _GRAPH_TABLES:
+        cleanup_ddl.append(f"DROP TABLE IF EXISTS {table}")
+
+    logger.info("Dropping existing Spanner graph schema (%d statements)...", len(cleanup_ddl))
+    database.update_ddl(cleanup_ddl).result()
 
     create_ddl = DDL_STATEMENTS + INDEX_STATEMENTS + [PROPERTY_GRAPH_DDL]
     logger.info("Creating Spanner graph schema (%d statements)...", len(create_ddl))
