@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 
+from google.cloud import spanner
 from langchain_google_spanner import SpannerGraphStore, SpannerGraphQAChain
 from langchain_google_vertexai import ChatVertexAI
 
@@ -18,11 +19,12 @@ logger = logging.getLogger(__name__)
 
 def build_chain(cfg: GraphRAGConfig) -> SpannerGraphQAChain:
     """Construct a SpannerGraphQAChain from the pipeline config."""
+    client = spanner.Client(project=cfg.gcp.project_id)
     graph = SpannerGraphStore(
         instance_id=cfg.spanner.instance_id,
         database_id=cfg.spanner.database_id,
         graph_name=cfg.spanner.graph_name,
-        project_id=cfg.gcp.project_id,
+        client=client,
     )
     logger.info(
         "Connected to Spanner Graph %s (instance=%s, db=%s)",
