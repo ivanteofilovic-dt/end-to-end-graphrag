@@ -119,6 +119,7 @@ CLEANUP_DDL = [
     "DROP INDEX IF EXISTS IdxReverseEdge",
     "DROP INDEX IF EXISTS IdxNodeLabel",
     "DROP INDEX IF EXISTS IdxEdgeLabel",
+    "DROP INDEX IF EXISTS GraphEdgeByDate",
     "DROP TABLE IF EXISTS Relationships",
     "DROP TABLE IF EXISTS Nodes",
     "DROP TABLE IF EXISTS GraphEdge",
