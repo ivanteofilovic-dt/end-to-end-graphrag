@@ -43,7 +43,6 @@ Important GQL syntax rules:
   Do NOT put WHERE after the MATCH clause.
 - Path quantification uses curly braces after the arrow: -[e:label]->{{1, 3}}
   NOT the Cypher star syntax [e:label*1..3]
-- Property filters inside patterns use double curly braces: (n:label {{{{id: 7}}}})
 - Always start with GRAPH <graphname>
 - Always alias RETURN values
 
@@ -70,8 +69,8 @@ MATCH (c:call)
 RETURN c.call_category AS category, COUNT(*) AS call_count
 ORDER BY call_count DESC
 
-Question: {{question}}
-Schema: {{schema}}
+Question: {question}
+Schema: {schema}
 
 Do not include any explanations or apologies.
 Do not prefix the query with `gql`.
@@ -112,13 +111,15 @@ def _build_gql_prompt(
     node_labels: list[str], edge_labels: list[str]
 ) -> PromptTemplate:
     """Build the GQL generation prompt with actual label values baked in."""
-    rendered = GQL_PROMPT_TEMPLATE.format(
-        node_labels="\n".join(f"  - {l}" for l in node_labels) or "  (none found)",
-        edge_labels="\n".join(f"  - {l}" for l in edge_labels) or "  (none found)",
-    )
     return PromptTemplate(
-        template=rendered,
+        template=GQL_PROMPT_TEMPLATE,
         input_variables=["question", "schema"],
+        partial_variables={
+            "node_labels": "\n".join(f"  - {l}" for l in node_labels)
+            or "  (none found)",
+            "edge_labels": "\n".join(f"  - {l}" for l in edge_labels)
+            or "  (none found)",
+        },
     )
 
 
