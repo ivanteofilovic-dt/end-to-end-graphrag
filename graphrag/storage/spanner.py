@@ -92,16 +92,16 @@ PROPERTY_GRAPH_DDL = """
         NODE TABLES (
             Nodes
                 KEY (id)
-                DYNAMIC LABEL (node_type)
                 PROPERTIES ALL COLUMNS EXCEPT (node_type)
+                DYNAMIC LABEL (node_type)
         )
         EDGE TABLES (
             Relationships
                 KEY (edge_id)
                 SOURCE KEY (id) REFERENCES Nodes(id)
                 DESTINATION KEY (target_node_id) REFERENCES Nodes(id)
-                DYNAMIC LABEL (relationship_type)
                 PROPERTIES (description, weight, document_ids)
+                DYNAMIC LABEL (relationship_type)
         )
 """
 
