@@ -1,4 +1,4 @@
-"""CLI entrypoint for the Graph RAG indexing pipeline."""
+"""CLI entrypoint for the Graph RAG indexing pipeline and query interface."""
 
 from __future__ import annotations
 
@@ -22,38 +22,8 @@ STEPS = {
 }
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Telecom Knowledge Graph Indexing Pipeline"
-    )
-    parser.add_argument(
-        "--config", default="config.yaml",
-        help="Path to the YAML configuration file (default: config.yaml)",
-    )
-    parser.add_argument(
-        "--step", type=int, default=None,
-        help="Run only this step (1-3)",
-    )
-    parser.add_argument(
-        "--from-step", type=int, default=None, dest="from_step",
-        help="Run from this step onwards (1-3)",
-    )
-    parser.add_argument(
-        "--max-rows", type=int, default=None, dest="max_rows",
-        help="Limit how many documents step 1 processes (e.g. 100 for a test run)",
-    )
-    args = parser.parse_args()
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    logger = logging.getLogger("graphrag")
-
-    cfg = GraphRAGConfig.from_yaml(args.config)
-    logger.info("Loaded config from %s (project=%s)", args.config, cfg.gcp.project_id)
-
+def _run_index(args, cfg: GraphRAGConfig, logger: logging.Logger) -> None:
+    """Run the indexing pipeline (steps 1-3)."""
     if args.step is not None:
         steps_to_run = [args.step]
     elif args.from_step is not None:
@@ -87,6 +57,77 @@ def main() -> None:
 
     total_elapsed = time.time() - total_start
     logger.info("Pipeline finished in %.1fs", total_elapsed)
+
+
+def _run_query(args, cfg: GraphRAGConfig) -> None:
+    """Run a single question or start an interactive query session."""
+    from graphrag.query import ask, interactive
+
+    if args.question:
+        answer = ask(cfg, args.question)
+        print(answer)
+    else:
+        interactive(cfg)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Telecom Knowledge Graph — Indexing Pipeline & Query Interface"
+    )
+    parser.add_argument(
+        "--config", default="config.yaml",
+        help="Path to the YAML configuration file (default: config.yaml)",
+    )
+    subparsers = parser.add_subparsers(dest="command")
+
+    # --- index subcommand (default behaviour) ---
+    index_parser = subparsers.add_parser(
+        "index", help="Run the indexing pipeline (extract → resolve → write)",
+    )
+    index_parser.add_argument(
+        "--step", type=int, default=None,
+        help="Run only this step (1-3)",
+    )
+    index_parser.add_argument(
+        "--from-step", type=int, default=None, dest="from_step",
+        help="Run from this step onwards (1-3)",
+    )
+    index_parser.add_argument(
+        "--max-rows", type=int, default=None, dest="max_rows",
+        help="Limit how many documents step 1 processes (e.g. 100 for a test run)",
+    )
+
+    # --- query subcommand ---
+    query_parser = subparsers.add_parser(
+        "query", help="Ask questions over the Spanner knowledge graph",
+    )
+    query_parser.add_argument(
+        "question", nargs="?", default=None,
+        help="Question to ask (omit for interactive mode)",
+    )
+
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    logger = logging.getLogger("graphrag")
+
+    cfg = GraphRAGConfig.from_yaml(args.config)
+    logger.info("Loaded config from %s (project=%s)", args.config, cfg.gcp.project_id)
+
+    if args.command == "query":
+        _run_query(args, cfg)
+    elif args.command == "index":
+        _run_index(args, cfg, logger)
+    else:
+        # Backwards compat: no subcommand → run full indexing pipeline
+        args.step = None
+        args.from_step = None
+        args.max_rows = None
+        _run_index(args, cfg, logger)
 
 
 if __name__ == "__main__":

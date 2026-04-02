@@ -20,6 +20,7 @@ class BigQueryConfig(BaseModel):
 class SpannerConfig(BaseModel):
     instance_id: str
     database_id: str
+    graph_name: str = "KnowledgeGraph"
 
 
 class LLMConfig(BaseModel):
