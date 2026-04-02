@@ -1,4 +1,9 @@
-"""Spanner Graph storage: schema creation, bulk writes, and property graph DDL."""
+"""Spanner Graph storage: schema creation, bulk writes, and property graph DDL.
+
+Uses a schematized graph model with typed columns for node/edge properties
+and DYNAMIC LABEL for flexible per-type labeling. The Relationships table
+is interleaved in Nodes for efficient forward edge traversal.
+"""
 
 from __future__ import annotations
 
@@ -52,13 +57,16 @@ DDL_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS Relationships (
         id STRING(64) NOT NULL,
-        relationship_type STRING(64) NOT NULL,
-        source_node_id STRING(64) NOT NULL,
         target_node_id STRING(64) NOT NULL,
+        edge_id STRING(64) NOT NULL,
+        relationship_type STRING(64) NOT NULL,
         description STRING(MAX),
         weight FLOAT64,
-        document_ids ARRAY<STRING(64)>
-    ) PRIMARY KEY (id)
+        document_ids ARRAY<STRING(64)>,
+        CONSTRAINT FK_TargetNode FOREIGN KEY (target_node_id)
+            REFERENCES Nodes(id) NOT ENFORCED
+    ) PRIMARY KEY (id, target_node_id, edge_id),
+        INTERLEAVE IN PARENT Nodes ON DELETE CASCADE
     """,
 ]
 
@@ -68,16 +76,14 @@ INDEX_STATEMENTS = [
         ON Nodes(node_type)
     """,
     """
+    CREATE INDEX IF NOT EXISTS IdxReverseEdge
+        ON Relationships(target_node_id, id, edge_id)
+        STORING (relationship_type, description, weight, document_ids),
+        INTERLEAVE IN Nodes
+    """,
+    """
     CREATE INDEX IF NOT EXISTS RelsByType
         ON Relationships(relationship_type)
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS RelsBySource
-        ON Relationships(source_node_id)
-    """,
-    """
-    CREATE INDEX IF NOT EXISTS RelsByTarget
-        ON Relationships(target_node_id)
     """,
 ]
 
@@ -86,12 +92,16 @@ PROPERTY_GRAPH_DDL = """
         NODE TABLES (
             Nodes
                 KEY (id)
+                DYNAMIC LABEL (node_type)
+                PROPERTIES ALL COLUMNS EXCEPT (node_type)
         )
         EDGE TABLES (
             Relationships
-                KEY (id)
-                SOURCE KEY (source_node_id) REFERENCES Nodes(id)
+                KEY (edge_id)
+                SOURCE KEY (id) REFERENCES Nodes(id)
                 DESTINATION KEY (target_node_id) REFERENCES Nodes(id)
+                DYNAMIC LABEL (relationship_type)
+                PROPERTIES (description, weight, document_ids)
         )
 """
 
@@ -110,7 +120,7 @@ def create_schema(cfg: GraphRAGConfig) -> None:
     operation = database.update_ddl(all_ddl)
     logger.info("Applying Spanner DDL (%d statements)...", len(all_ddl))
     operation.result()
-    logger.info("Spanner schema created/updated")
+    logger.info("Spanner graph schema created/updated")
 
 
 def _chunk_list(lst: list, size: int) -> list[list]:
@@ -130,18 +140,20 @@ _NODE_COLUMNS = [
     "document_ids", "description",
 ]
 
-_RELATIONSHIP_COLUMNS = [
-    "id", "relationship_type", "source_node_id", "target_node_id",
-    "description", "weight", "document_ids",
+_EDGE_COLUMNS = [
+    "id", "target_node_id", "edge_id",
+    "relationship_type", "description", "weight", "document_ids",
 ]
 
 
 def bulk_write_nodes(cfg: GraphRAGConfig, rows: list[dict[str, Any]]) -> None:
+    """Write graph nodes to the Nodes table."""
     _bulk_upsert(cfg, "Nodes", _NODE_COLUMNS, rows)
 
 
-def bulk_write_relationships(cfg: GraphRAGConfig, rows: list[dict[str, Any]]) -> None:
-    _bulk_upsert(cfg, "Relationships", _RELATIONSHIP_COLUMNS, rows)
+def bulk_write_edges(cfg: GraphRAGConfig, rows: list[dict[str, Any]]) -> None:
+    """Write graph edges to the Relationships table (interleaved in Nodes)."""
+    _bulk_upsert(cfg, "Relationships", _EDGE_COLUMNS, rows)
 
 
 def _bulk_upsert(
