@@ -25,12 +25,33 @@ from graphrag.storage import bigquery as bq
 logger = logging.getLogger(__name__)
 
 
+def _singularize(word: str) -> str:
+    """Naïve English singularization for common plural suffixes.
+
+    Not linguistically perfect, but consistent — two surface forms of the same
+    word will collapse to the same stem, which is all we need for matching.
+    """
+    if len(word) <= 3:
+        return word
+    if word.endswith("ies"):
+        return word[:-3] + "y"
+    if word.endswith(("sses", "xes", "zes", "ches", "shes")):
+        return word[:-2]
+    if word.endswith("s") and not word.endswith(("ss", "us", "is")):
+        return word[:-1]
+    return word
+
+
 def _normalize_name(name: str) -> str:
-    """Normalize entity name for deduplication: lowercase, collapse whitespace/separators."""
+    """Normalize entity name for deduplication.
+
+    Lowercases, collapses whitespace/separators, and singularizes each token
+    so that e.g. "Mobile Phones" and "mobile phone" resolve to the same key.
+    """
     name = name.strip().lower()
     name = re.sub(r"[_\-/]+", " ", name)
     name = re.sub(r"\s+", " ", name)
-    return name
+    return " ".join(_singularize(t) for t in name.split())
 
 MERGED_NODES_SCHEMA = [
     bigquery.SchemaField("id", "STRING", mode="REQUIRED"),
@@ -251,13 +272,57 @@ def _pre_merge_by_normalized_name(
     """Group nodes with identical normalized names into clusters.
 
     This is a cheap first pass that collapses trivial duplicates
-    (case, whitespace, separators) before the more expensive Splink step.
+    (case, whitespace, separators, plurals) before the more expensive Splink
+    step.
     """
     by_norm: dict[str, list[dict]] = defaultdict(list)
     for n in nodes:
         key = _normalize_name(n.get("name") or "")
         by_norm[key].append(n)
     return list(by_norm.values())
+
+
+def _merge_token_subsets(groups: list[list[dict]]) -> list[list[dict]]:
+    """Merge groups when one name's token set is a subset of another's.
+
+    Catches cases like "phone" ⊂ "mobile phone".  To avoid over-merging,
+    the shorter name must contain at least half the tokens of the longer one.
+    Groups with more tokens are processed first so they become merge targets;
+    ties are broken alphabetically for determinism.
+    """
+    indexed: list[tuple[frozenset[str], list[dict]]] = []
+    for group in groups:
+        name = _normalize_name(group[0].get("name", ""))
+        tokens = frozenset(name.split()) if name else frozenset()
+        indexed.append((tokens, group))
+
+    indexed.sort(key=lambda g: (-len(g[0]), sorted(g[0]) if g[0] else []))
+
+    merged: list[tuple[frozenset[str], list[dict]]] = []
+    for tokens, group in indexed:
+        if not tokens:
+            merged.append((tokens, group))
+            continue
+
+        best = -1
+        for i, (m_tokens, _) in enumerate(merged):
+            if not m_tokens:
+                continue
+            smaller, larger = (
+                (tokens, m_tokens) if len(tokens) <= len(m_tokens)
+                else (m_tokens, tokens)
+            )
+            if smaller <= larger and len(smaller) / len(larger) >= 0.5:
+                best = i
+                break
+
+        if best >= 0:
+            m_tokens, m_group = merged[best]
+            merged[best] = (m_tokens | tokens, m_group + group)
+        else:
+            merged.append((tokens, group))
+
+    return [g for _, g in merged]
 
 
 def _resolve_type(
@@ -267,11 +332,15 @@ def _resolve_type(
 ) -> list[dict[str, Any]]:
     """Pre-merge on normalized name, then run Splink on remaining groups."""
 
-    # Pass 1: collapse trivial duplicates by exact normalized name
+    # Pass 1a: collapse trivial duplicates by exact normalized name
     pre_groups = _pre_merge_by_normalized_name(nodes)
+    name_count = len(pre_groups)
+
+    # Pass 1b: merge groups whose tokens are subsets (e.g. "phone" ⊂ "mobile phone")
+    pre_groups = _merge_token_subsets(pre_groups)
     logger.info(
-        "Pre-merge %s: %d raw -> %d distinct normalized names",
-        node_type, len(nodes), len(pre_groups),
+        "Pre-merge %s: %d raw -> %d names -> %d groups (after token-subset merge)",
+        node_type, len(nodes), name_count, len(pre_groups),
     )
 
     # Build one representative per pre-merge group
@@ -381,8 +450,10 @@ def _fallback_name_merge(node_type: str, nodes: list[dict]) -> list[dict[str, An
     for n in nodes:
         by_name[_normalize_name(n.get("name", ""))].append(n)
 
+    groups = _merge_token_subsets(list(by_name.values()))
+
     results = []
-    for group in by_name.values():
+    for group in groups:
         canonical = _make_canonical(group[0], group)
         canonical["_source_ids"] = [n["id"] for n in group]
         results.append(canonical)
