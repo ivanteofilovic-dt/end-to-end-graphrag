@@ -1,10 +1,13 @@
-"""Exploratory analysis of raw nodes using Splink.
+"""Exploratory analysis of raw and merged nodes using Splink.
 
-Reads raw_nodes from BigQuery and produces per-node-type missingness and
-column-distribution charts (HTML) to guide entity-resolution tuning.
+Reads raw_nodes or merged_nodes from BigQuery and produces per-node-type
+missingness and column-distribution charts (HTML) to guide entity-resolution
+tuning or evaluate its results.
 
 Usage:
-    python exploratory_analysis.py [--config config.yaml] [--output-dir eda_output]
+    python exploratory_analysis.py --stage raw    [--config config.yaml] [--output-dir eda_output]
+    python exploratory_analysis.py --stage merged [--config config.yaml] [--output-dir eda_output]
+    python exploratory_analysis.py --stage both   [--config config.yaml] [--output-dir eda_output]
 
 Based on: https://moj-analytical-services.github.io/splink/demos/tutorials/02_Exploratory_analysis.html
 """
@@ -49,14 +52,22 @@ def _save_chart(chart, path: Path) -> None:
     logger.info("Saved chart -> %s", path)
 
 
-def _load_raw_nodes(cfg: GraphRAGConfig) -> pd.DataFrame:
-    """Read all raw_nodes from BigQuery into a DataFrame."""
-    rows = bq.read_table_all(cfg, "raw_nodes")
+def _load_nodes(cfg: GraphRAGConfig, stage: str) -> pd.DataFrame:
+    """Read all nodes for the given stage from BigQuery into a DataFrame."""
+    table = "raw_nodes" if stage == "raw" else "merged_nodes"
+    rows = bq.read_table_all(cfg, table)
     if not rows:
-        raise SystemExit("No raw_nodes found in BigQuery. Run the extraction pipeline first.")
+        raise SystemExit(f"No {table} found in BigQuery. Run the pipeline first.")
     df = pd.DataFrame(rows)
-    logger.info("Loaded %d raw nodes (%d columns)", len(df), len(df.columns))
+    logger.info("Loaded %d %s nodes (%d columns)", len(df), stage, len(df.columns))
     return df
+
+
+def _id_columns(stage: str) -> list[str]:
+    """Return the ID columns present in raw vs merged schemas."""
+    if stage == "raw":
+        return ["id", "document_id"]
+    return ["id"]
 
 
 def _relevant_columns(node_type: str) -> list[str]:
@@ -66,74 +77,136 @@ def _relevant_columns(node_type: str) -> list[str]:
     return base + extra
 
 
-def analyse_all(df: pd.DataFrame, out: Path) -> None:
+def analyse_all(df: pd.DataFrame, stage: str, out: Path) -> None:
     """Run completeness and profile analysis across all nodes."""
     db_api = DuckDBAPI()
+    label = stage.capitalize()
 
-    logger.info("=== Overall analysis (%d nodes) ===", len(df))
+    logger.info("=== %s — overall analysis (%d nodes) ===", label, len(df))
     chart = completeness_chart(df, db_api=db_api)
-    _save_chart(chart, out / "all_completeness.html")
+    _save_chart(chart, out / f"{stage}_all_completeness.html")
 
     cols_to_profile = ["node_type", "name", "description"]
     chart = profile_columns(
         df, db_api=db_api, column_expressions=cols_to_profile, top_n=15, bottom_n=5,
     )
-    _save_chart(chart, out / "all_profile.html")
+    _save_chart(chart, out / f"{stage}_all_profile.html")
 
-    logger.info("--- Node type distribution ---")
+    logger.info("--- %s — node type distribution ---", label)
     print(df["node_type"].value_counts().to_string())
     print()
 
 
-def analyse_node_type(df_type: pd.DataFrame, node_type: str, out: Path) -> None:
+def analyse_node_type(
+    df_type: pd.DataFrame, node_type: str, stage: str, out: Path,
+) -> None:
     """Run completeness and profile analysis for a single node type."""
     db_api = DuckDBAPI()
     slug = node_type.lower()
+    label = stage.capitalize()
     cols = _relevant_columns(node_type)
-    df_subset = df_type[["id", "document_id"] + cols].copy()
+    id_cols = [c for c in _id_columns(stage) if c in df_type.columns]
+    available_cols = [c for c in cols if c in df_type.columns]
+    df_subset = df_type[id_cols + available_cols].copy()
 
-    logger.info("--- %s: completeness ---", node_type)
+    logger.info("--- %s %s: completeness ---", label, node_type)
     chart = completeness_chart(df_subset, db_api=db_api)
-    _save_chart(chart, out / f"{slug}_completeness.html")
+    _save_chart(chart, out / f"{stage}_{slug}_completeness.html")
 
-    logger.info("--- %s: column profiles ---", node_type)
+    logger.info("--- %s %s: column profiles ---", label, node_type)
     chart = profile_columns(
-        df_subset, db_api=db_api, column_expressions=cols, top_n=15, bottom_n=5,
+        df_subset, db_api=db_api, column_expressions=available_cols, top_n=15, bottom_n=5,
     )
-    _save_chart(chart, out / f"{slug}_profile.html")
+    _save_chart(chart, out / f"{stage}_{slug}_profile.html")
 
-    logger.info("--- %s: normalized-name cardinality ---", node_type)
+    logger.info("--- %s %s: name cardinality ---", label, node_type)
     names = df_type["name"].dropna().apply(_normalize_name)
     total = len(names)
     unique = names.nunique()
-    print(f"  {node_type}: {total} raw names -> {unique} unique normalized ({total - unique} potential duplicates)")
+    if stage == "raw":
+        print(f"  {node_type}: {total} raw names -> {unique} unique normalized ({total - unique} potential duplicates)")
+    else:
+        print(f"  {node_type}: {total} merged nodes, {unique} unique normalized names")
     print(f"  Top 10 most frequent names:")
     for name, count in names.value_counts().head(10).items():
         print(f"    {count:>5d}  {name}")
     print()
 
 
+def compare_stages(df_raw: pd.DataFrame, df_merged: pd.DataFrame) -> None:
+    """Print a side-by-side comparison of raw vs merged node counts."""
+    print("\n" + "=" * 60)
+    print("  Raw vs Merged — Entity Resolution Summary")
+    print("=" * 60)
+    print(f"  {'Node Type':<12} {'Raw':>8} {'Merged':>8} {'Reduction':>10}")
+    print("  " + "-" * 42)
+
+    for nt in NodeType:
+        raw_count = len(df_raw[df_raw["node_type"] == nt.value])
+        merged_count = len(df_merged[df_merged["node_type"] == nt.value])
+        if raw_count == 0:
+            continue
+        pct = (1 - merged_count / raw_count) * 100 if raw_count else 0
+        print(f"  {nt.value:<12} {raw_count:>8d} {merged_count:>8d} {pct:>9.1f}%")
+
+    raw_total = len(df_raw)
+    merged_total = len(df_merged)
+    pct_total = (1 - merged_total / raw_total) * 100 if raw_total else 0
+    print("  " + "-" * 42)
+    print(f"  {'TOTAL':<12} {raw_total:>8d} {merged_total:>8d} {pct_total:>9.1f}%")
+    print("=" * 60 + "\n")
+
+
+def _run_stage(cfg: GraphRAGConfig, stage: str, out: Path) -> pd.DataFrame:
+    """Load nodes for *stage* and run all analyses. Returns the DataFrame."""
+    df = _load_nodes(cfg, stage)
+
+    # merged_nodes has document_ids (repeated/list) — not useful for Splink profiling
+    drop = [c for c in ("document_ids",) if c in df.columns]
+    df_analysis = df.drop(columns=drop)
+
+    analyse_all(df_analysis, stage, out)
+
+    for nt in NodeType:
+        df_type = df_analysis[df_analysis["node_type"] == nt.value]
+        if df_type.empty:
+            logger.info("Skipping %s (no %s nodes)", nt.value, stage)
+            continue
+        logger.info("=== %s %s: %d nodes ===", stage.capitalize(), nt.value, len(df_type))
+        analyse_node_type(df_type, nt.value, stage, out)
+
+    return df
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Splink exploratory analysis on raw nodes")
+    parser = argparse.ArgumentParser(
+        description="Splink exploratory analysis on raw and/or merged nodes",
+    )
     parser.add_argument("--config", default="config.yaml", help="Path to config YAML")
     parser.add_argument("--output-dir", default="eda_output", help="Directory for HTML charts")
+    parser.add_argument(
+        "--stage",
+        choices=["raw", "merged", "both"],
+        default="both",
+        help="Which node table to analyse (default: both)",
+    )
     args = parser.parse_args()
 
     cfg = GraphRAGConfig.from_yaml(args.config)
     out = Path(args.output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    df = _load_raw_nodes(cfg)
+    df_raw = None
+    df_merged = None
 
-    analyse_all(df, out)
+    if args.stage in ("raw", "both"):
+        df_raw = _run_stage(cfg, "raw", out)
 
-    for nt in NodeType:
-        df_type = df[df["node_type"] == nt.value]
-        if df_type.empty:
-            logger.info("Skipping %s (no nodes)", nt.value)
-            continue
-        logger.info("=== %s: %d nodes ===", nt.value, len(df_type))
-        analyse_node_type(df_type, nt.value, out)
+    if args.stage in ("merged", "both"):
+        df_merged = _run_stage(cfg, "merged", out)
+
+    if df_raw is not None and df_merged is not None:
+        compare_stages(df_raw, df_merged)
 
     logger.info("All charts saved to %s/", out)
 
