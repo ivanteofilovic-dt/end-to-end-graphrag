@@ -35,6 +35,11 @@ class SplinkConfig(BaseModel):
     max_pairs_per_type: int = 10_000_000
 
 
+class CommunityConfig(BaseModel):
+    max_cluster_size: int = 10
+    seed: int | None = 42
+
+
 class PipelineConfig(BaseModel):
     batch_size: int = 500
 
@@ -45,6 +50,7 @@ class GraphRAGConfig(BaseModel):
     spanner: SpannerConfig
     llm: LLMConfig = LLMConfig()
     splink: SplinkConfig = SplinkConfig()
+    community: CommunityConfig = CommunityConfig()
     pipeline: PipelineConfig = PipelineConfig()
 
     @classmethod

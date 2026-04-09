@@ -12,13 +12,17 @@ from graphrag.storage import bigquery as bq
 from graphrag.pipeline import (
     extract_graph,
     entity_resolution,
+    leiden_clustering,
+    community_reports,
     write_spanner,
 )
 
 STEPS = {
     1: ("extract_graph", extract_graph.run),
     2: ("entity_resolution", entity_resolution.run),
-    3: ("write_to_spanner", write_spanner.run),
+    3: ("leiden_clustering", leiden_clustering.run),
+    4: ("community_reports", community_reports.run),
+    5: ("write_to_spanner", write_spanner.run),
 }
 
 
@@ -82,15 +86,15 @@ def main() -> None:
 
     # --- index subcommand (default behaviour) ---
     index_parser = subparsers.add_parser(
-        "index", help="Run the indexing pipeline (extract → resolve → write)",
+        "index", help="Run the indexing pipeline (extract → resolve → cluster → report → write)",
     )
     index_parser.add_argument(
         "--step", type=int, default=None,
-        help="Run only this step (1-3)",
+        help="Run only this step (1-5)",
     )
     index_parser.add_argument(
         "--from-step", type=int, default=None, dest="from_step",
-        help="Run from this step onwards (1-3)",
+        help="Run from this step onwards (1-5)",
     )
     index_parser.add_argument(
         "--max-rows", type=int, default=None, dest="max_rows",
