@@ -5,6 +5,7 @@ import logging
 import time
 from typing import Any
 
+import httpx
 from google import genai
 from google.genai.types import CreateBatchJobConfig, HttpOptions, JobState
 
@@ -21,6 +22,8 @@ _TERMINAL_STATES = {
 }
 
 _POLL_INTERVAL_SECONDS = 30
+_MAX_CONSECUTIVE_ERRORS = 10
+_MAX_BACKOFF_SECONDS = 300
 
 
 def _get_genai_client(cfg: GraphRAGConfig) -> genai.Client:
@@ -30,6 +33,17 @@ def _get_genai_client(cfg: GraphRAGConfig) -> genai.Client:
         location=cfg.gcp.location,
         http_options=HttpOptions(api_version="v1"),
     )
+
+
+def _is_transient(exc: Exception) -> bool:
+    """Return True if the exception looks like a transient network error."""
+    return isinstance(exc, (
+        httpx.ConnectError,
+        httpx.TimeoutException,
+        httpx.NetworkError,
+        ConnectionError,
+        OSError,
+    ))
 
 
 def submit_batch_job(
@@ -75,20 +89,48 @@ def poll_until_done(
     job_name: str,
     *,
     poll_interval: int = _POLL_INTERVAL_SECONDS,
+    max_retries: int = _MAX_CONSECUTIVE_ERRORS,
 ) -> JobState:
-    """Poll a batch job until it reaches a terminal state."""
+    """Poll a batch job until it reaches a terminal state.
+
+    Retries with exponential backoff on transient network errors so that
+    a momentary DNS or connectivity blip does not kill a multi-hour run.
+    """
     client = _get_genai_client(cfg)
+    consecutive_errors = 0
 
     while True:
-        job = client.batches.get(name=job_name)
-        logger.info("Batch job %s: state=%s", job_name, job.state)
+        try:
+            job = client.batches.get(name=job_name)
+            consecutive_errors = 0
+            logger.info("Batch job %s: state=%s", job_name, job.state)
 
-        if job.state in _TERMINAL_STATES:
-            if job.state != JobState.JOB_STATE_SUCCEEDED:
+            if job.state in _TERMINAL_STATES:
+                if job.state != JobState.JOB_STATE_SUCCEEDED:
+                    raise RuntimeError(
+                        f"Batch job {job_name} ended with state {job.state}"
+                    )
+                return job.state
+
+        except Exception as exc:
+            if not _is_transient(exc):
+                raise
+            consecutive_errors += 1
+            if consecutive_errors > max_retries:
                 raise RuntimeError(
-                    f"Batch job {job_name} ended with state {job.state}"
-                )
-            return job.state
+                    f"Giving up after {max_retries} consecutive transient "
+                    f"errors polling {job_name}. Last error: {exc}"
+                ) from exc
+            backoff = min(
+                poll_interval * (2 ** (consecutive_errors - 1)),
+                _MAX_BACKOFF_SECONDS,
+            )
+            logger.warning(
+                "Transient error polling %s (attempt %d/%d): %s — retrying in %ds",
+                job_name, consecutive_errors, max_retries, exc, backoff,
+            )
+            time.sleep(backoff)
+            continue
 
         time.sleep(poll_interval)
 
@@ -107,6 +149,21 @@ def run_batch_job(
     )
     poll_until_done(cfg, job_name, poll_interval=poll_interval)
     logger.info("Batch job completed: %s", job_name)
+
+
+# ── Batch job management ────────────────────────────────────────────────
+
+
+def list_batch_jobs(cfg: GraphRAGConfig, *, limit: int = 20) -> list:
+    """Return the most recent batch jobs for the configured project."""
+    client = _get_genai_client(cfg)
+    return list(client.batches.list(config={"page_size": limit}))
+
+
+def get_batch_job(cfg: GraphRAGConfig, job_name: str) -> Any:
+    """Fetch a single batch job by resource name."""
+    client = _get_genai_client(cfg)
+    return client.batches.get(name=job_name)
 
 
 def parse_batch_results(

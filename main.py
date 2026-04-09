@@ -74,6 +74,38 @@ def _run_query(args, cfg: GraphRAGConfig) -> None:
         interactive(cfg)
 
 
+def _run_batch(args, cfg: GraphRAGConfig, logger: logging.Logger) -> None:
+    """Manage Gemini batch jobs (list / status / poll)."""
+    from graphrag.batch import client as batch_client
+
+    if args.batch_command == "list":
+        jobs = batch_client.list_batch_jobs(cfg, limit=args.limit)
+        if not jobs:
+            print("No batch jobs found.")
+            return
+        for job in jobs:
+            print(f"  {job.name}  state={job.state}")
+
+    elif args.batch_command == "status":
+        job = batch_client.get_batch_job(cfg, args.job_name)
+        print(f"Job:   {job.name}")
+        print(f"State: {job.state}")
+        print(f"Model: {job.model}")
+        if hasattr(job, "create_time") and job.create_time:
+            print(f"Created: {job.create_time}")
+        if hasattr(job, "update_time") and job.update_time:
+            print(f"Updated: {job.update_time}")
+
+    elif args.batch_command == "poll":
+        logger.info("Resuming polling for job %s", args.job_name)
+        batch_client.poll_until_done(cfg, args.job_name)
+        logger.info("Batch job completed: %s", args.job_name)
+
+    else:
+        print("Usage: graphrag batch {list,status,poll}")
+        sys.exit(1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Telecom Knowledge Graph — Indexing Pipeline & Query Interface"
@@ -110,6 +142,28 @@ def main() -> None:
         help="Question to ask (omit for interactive mode)",
     )
 
+    # --- batch subcommand ---
+    batch_parser = subparsers.add_parser(
+        "batch", help="Manage Gemini batch prediction jobs",
+    )
+    batch_sub = batch_parser.add_subparsers(dest="batch_command")
+
+    list_parser = batch_sub.add_parser("list", help="List recent batch jobs")
+    list_parser.add_argument(
+        "--limit", type=int, default=20,
+        help="Max number of jobs to show (default: 20)",
+    )
+
+    status_parser = batch_sub.add_parser(
+        "status", help="Show details of a batch job",
+    )
+    status_parser.add_argument("job_name", help="Batch job resource name")
+
+    poll_parser = batch_sub.add_parser(
+        "poll", help="Resume polling a running batch job until completion",
+    )
+    poll_parser.add_argument("job_name", help="Batch job resource name")
+
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -126,6 +180,8 @@ def main() -> None:
         _run_query(args, cfg)
     elif args.command == "index":
         _run_index(args, cfg, logger)
+    elif args.command == "batch":
+        _run_batch(args, cfg, logger)
     else:
         # Backwards compat: no subcommand → run full indexing pipeline
         args.step = None
