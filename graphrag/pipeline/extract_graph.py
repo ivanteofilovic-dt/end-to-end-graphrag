@@ -87,6 +87,7 @@ def _prepare_extraction_requests(
 
     client = bq.get_client(cfg)
     limit_clause = f" LIMIT {max_rows}" if max_rows else ""
+    # TODO: missing timestamp
     query = (
         f"SELECT data_id, full_conversation"
         f" FROM `{cfg.source_table_fqn()}`"
